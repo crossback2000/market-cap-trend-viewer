@@ -14,6 +14,11 @@ export default function Page() {
   const [error, setError] = useState('');
   const [tickerFilter, setTickerFilter] = useState('');
 
+  const availableTickers = useMemo(
+    () => Array.from(new Set(history.map((h) => h.ticker))),
+    [history]
+  );
+
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -55,6 +60,15 @@ export default function Page() {
     [filteredHistory]
   );
 
+  const missingTickers = useMemo(() => {
+    if (!tickerFilter.trim()) return [] as string[];
+    const tokens = tickerFilter
+      .split(',')
+      .map((t) => t.trim().toUpperCase())
+      .filter(Boolean);
+    return tokens.filter((t) => !availableTickers.includes(t));
+  }, [availableTickers, tickerFilter]);
+
   return (
     <main style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="card">
@@ -69,6 +83,22 @@ export default function Page() {
               onChange={(e) => setTickerFilter(e.target.value)}
             />
           </label>
+          {availableTickers.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ color: '#9fb2d0' }}>사용 가능한 티커</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {availableTickers.map((ticker, idx) => (
+                  <span className="badge" key={ticker}>
+                    <span
+                      className="badge-color"
+                      style={{ backgroundColor: palette[idx % palette.length] }}
+                    />
+                    {ticker}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           {uniqueTickers.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {uniqueTickers.map((ticker, idx) => (
@@ -85,6 +115,12 @@ export default function Page() {
         </div>
         {loading && <div className="loading">데이터를 불러오는 중...</div>}
         {error && <div className="error">{error}</div>}
+        {!loading && !error && missingTickers.length > 0 && (
+          <div className="error">
+            {missingTickers.join(', ')} 티커에 대한 데이터가 없습니다. 위 목록에서 사용 가능한
+            티커를 확인해 주세요.
+          </div>
+        )}
         {!loading && !error && filteredHistory.length === 0 && (
           <div className="error">표시할 데이터가 없습니다.</div>
         )}

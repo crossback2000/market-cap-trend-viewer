@@ -3,6 +3,55 @@ import path from 'path';
 import initSqlJs from 'sql.js';
 import type { ErrnoException } from 'node:fs';
 
+type SeedHistory = {
+  date: string;
+  market_cap: number;
+};
+
+type SeedTicker = {
+  ticker: string;
+  name?: string;
+  history?: SeedHistory[];
+};
+
+function parseTickers(): SeedTicker[] {
+  const argTickers = process.argv.find((arg) => arg.startsWith('--tickers='));
+  const tickersFromArgs = argTickers?.split('=')[1];
+  const tickersFromEnv = process.env.SEED_TICKERS;
+  const tickersRaw = tickersFromArgs || tickersFromEnv;
+
+  if (tickersRaw) {
+    return tickersRaw
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .map((ticker) => ({ ticker: ticker.toUpperCase(), name: ticker.toUpperCase() }));
+  }
+
+  const fileArg = process.argv.find((arg) => arg.startsWith('--tickers-file='));
+  const tickersFilePath = fileArg?.split('=')[1];
+
+  if (tickersFilePath) {
+    const resolved = path.isAbsolute(tickersFilePath)
+      ? tickersFilePath
+      : path.join(process.cwd(), tickersFilePath);
+    const raw = fs.readFileSync(resolved, 'utf-8');
+    const parsed = JSON.parse(raw) as SeedTicker[];
+    return parsed.map((item) => ({
+      ticker: item.ticker.toUpperCase(),
+      name: item.name ?? item.ticker.toUpperCase(),
+      history: item.history,
+    }));
+  }
+
+  return [
+    { ticker: 'AAPL', name: 'Apple Inc.' },
+    { ticker: 'MSFT', name: 'Microsoft Corp.' },
+    { ticker: 'AMZN', name: 'Amazon.com Inc.' },
+    { ticker: 'GOOG', name: 'Alphabet Inc. (C)' },
+  ];
+}
+
 async function seed() {
   const dbPath =
     process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'market_caps.sqlite');
@@ -26,6 +75,16 @@ async function seed() {
     }
   }
 
+  const tickers = parseTickers();
+
+  if (tickers.length === 0) {
+    throw new Error(
+      'No tickers provided. Use --tickers=AAPL,MSFT or --tickers-file=path/to/file.json.'
+    );
+  }
+
+  console.log('Seeding tickers:', tickers.map((t) => t.ticker).join(', '));
+
   const db = new SQL.Database(dbFile);
 
   db.run(`
@@ -46,13 +105,6 @@ async function seed() {
       FOREIGN KEY(stock_id) REFERENCES stocks(id)
     );
   `);
-
-  const tickers = [
-    { ticker: 'AAPL', name: 'Apple Inc.' },
-    { ticker: 'MSFT', name: 'Microsoft Corp.' },
-    { ticker: 'AMZN', name: 'Amazon.com Inc.' },
-    { ticker: 'GOOG', name: 'Alphabet Inc. (C)' },
-  ];
 
   const insertStock = db.prepare(
     'INSERT OR IGNORE INTO stocks (ticker, name, sector) VALUES (?, ?, NULL)'
@@ -77,6 +129,35 @@ async function seed() {
     return date.toISOString().slice(0, 10);
   }
 
+  const historicalDates = new Set<string>();
+  tickers.forEach((t) => {
+    t.history?.forEach((h) => historicalDates.add(h.date));
+  });
+
+  const defaultDates = (() => {
+    const today = new Date();
+    const dates: string[] = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      dates.push(formatDate(date));
+    }
+    return dates;
+  })();
+
+  const dates = historicalDates.size > 0
+    ? Array.from(historicalDates).sort()
+    : defaultDates;
+
+  const historyMap = new Map<string, Map<string, number>>();
+  tickers.forEach((t) => {
+    const perTicker = new Map<string, number>();
+    t.history?.forEach((h) => {
+      perTicker.set(h.date, h.market_cap);
+    });
+    historyMap.set(t.ticker, perTicker);
+  });
+
   db.run('BEGIN');
   try {
     tickers.forEach((entry) => insertStock.run([entry.ticker, entry.name]));
@@ -95,15 +176,14 @@ async function seed() {
       stockMap.set(entry.ticker, row.id);
     });
 
-    const today = new Date();
-    for (let i = 6; i >= 0; i -= 1) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const iso = formatDate(date);
-
+    dates.forEach((iso) => {
       const generated = tickers.map((entry, idx) => {
+        const historyValue = historyMap.get(entry.ticker)?.get(iso);
         const base = 2500 - idx * 400;
-        const marketCap = randomWalk(base * 1_000_000_000, 120_000_000);
+        const marketCap =
+          historyValue !== undefined
+            ? historyValue
+            : randomWalk(base * 1_000_000_000, 120_000_000);
         return {
           ticker: entry.ticker,
           stock_id: stockMap.get(entry.ticker)!,
@@ -124,7 +204,7 @@ async function seed() {
             rankIdx + 1,
           ]);
         });
-    }
+    });
     db.run('COMMIT');
   } catch (err) {
     db.run('ROLLBACK');
