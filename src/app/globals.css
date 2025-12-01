@@ -118,3 +118,36 @@ tr:nth-child(even) {
   border: 1px solid #1f2a44;
   background: #0f172a;
 }
+
+.date-picker {
+  padding: 8px;
+  border: 1px solid #1f2a44;
+  border-radius: 12px;
+  background: #0e1526;
+}
+
+.rdp {
+  --rdp-accent-color: #60a5fa;
+  --rdp-background-color: #132039;
+  --rdp-outline: 2px solid #60a5fa;
+  color: #e3e7ef;
+}
+
+.rdp-caption_label,
+.rdp-dropdown,
+.rdp-nav_button,
+.rdp-day,
+.rdp-weekday {
+  color: #e3e7ef;
+}
+
+.rdp-day_selected,
+.rdp-day_selected:hover,
+.rdp-day_selected:focus-visible {
+  background-color: #60a5fa;
+  color: #0b1221;
+}
+
+.rdp-day:hover {
+  background-color: #1f2a44;
+}

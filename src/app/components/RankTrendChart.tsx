@@ -29,15 +29,17 @@ function groupByDate(points: MarketCapPoint[]) {
 
 type Props = {
   data: MarketCapPoint[];
+  title?: string;
 };
 
-export function RankTrendChart({ data }: Props) {
+export function RankTrendChart({ data, title }: Props) {
   const grouped = groupByDate(data);
   const tickers = Array.from(new Set(data.map((p) => p.ticker)));
 
   return (
     <div className="card">
-      <h2 className="section-title">순위 변화 (최근 7일)</h2>
+      <h2 className="section-title">순위 변화</h2>
+      <p style={{ marginTop: 0, marginBottom: 6, color: '#9fb2d0' }}>{title}</p>
       <p style={{ marginTop: 0, color: '#9fb2d0' }}>
         Y축은 1위가 위로 가도록 반전되었습니다. 데이터가 없는 날짜는 점이 표시되지 않습니다.
       </p>

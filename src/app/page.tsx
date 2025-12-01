@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { DateRange, DayPicker } from 'react-day-picker';
 import { RankTrendChart } from './components/RankTrendChart';
 import { TodayTable } from './components/TodayTable';
 import { MarketCapPoint, TodayRow } from './types';
+import 'react-day-picker/dist/style.css';
 
 const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#c084fc'];
 
@@ -13,10 +15,15 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tickerFilter, setTickerFilter] = useState('');
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
 
-  const availableTickers = useMemo(
-    () => Array.from(new Set(history.map((h) => h.ticker))),
-    [history]
+  const parsedTickers = useMemo(
+    () =>
+      tickerFilter
+        .split(',')
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean),
+    [tickerFilter]
   );
 
   useEffect(() => {
@@ -24,7 +31,21 @@ export default function Page() {
       setLoading(true);
       setError('');
       try {
-        const historyRes = await fetch('/api/market-caps');
+        const params = new URLSearchParams();
+        if (parsedTickers.length > 0) {
+          params.set('tickers', parsedTickers.join(','));
+        }
+
+        if (dateRange?.from) {
+          const fromDate = dateRange.from;
+          const toDate = dateRange.to ?? dateRange.from;
+          params.set('from', fromDate.toISOString().slice(0, 10));
+          params.set('to', toDate.toISOString().slice(0, 10));
+        }
+
+        const historyRes = await fetch(
+          `/api/market-caps${params.toString() ? `?${params.toString()}` : ''}`
+        );
         const todayRes = await fetch('/api/market-caps/today');
 
         if (!historyRes.ok || !todayRes.ok) {
@@ -44,30 +65,20 @@ export default function Page() {
     }
 
     load();
-  }, []);
-
-  const filteredHistory = useMemo(() => {
-    if (!tickerFilter.trim()) return history;
-    const tokens = tickerFilter
-      .split(',')
-      .map((t) => t.trim().toUpperCase())
-      .filter(Boolean);
-    return history.filter((h) => tokens.includes(h.ticker.toUpperCase()));
-  }, [history, tickerFilter]);
+  }, [parsedTickers, dateRange]);
 
   const uniqueTickers = useMemo(
-    () => Array.from(new Set(filteredHistory.map((h) => h.ticker))),
-    [filteredHistory]
+    () => Array.from(new Set(history.map((h) => h.ticker))),
+    [history]
   );
 
-  const missingTickers = useMemo(() => {
-    if (!tickerFilter.trim()) return [] as string[];
-    const tokens = tickerFilter
-      .split(',')
-      .map((t) => t.trim().toUpperCase())
-      .filter(Boolean);
-    return tokens.filter((t) => !availableTickers.includes(t));
-  }, [availableTickers, tickerFilter]);
+  const selectedRangeLabel = useMemo(() => {
+    if (!dateRange?.from) return '최근 7일 데이터';
+    const from = dateRange.from.toISOString().slice(0, 10);
+    const to = (dateRange.to ?? dateRange.from).toISOString().slice(0, 10);
+    if (from === to) return `${from} 데이터`;
+    return `${from} ~ ${to} 데이터`;
+  }, [dateRange]);
 
   return (
     <main style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -83,51 +94,44 @@ export default function Page() {
               onChange={(e) => setTickerFilter(e.target.value)}
             />
           </label>
-          {availableTickers.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ color: '#9fb2d0' }}>사용 가능한 티커</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {availableTickers.map((ticker, idx) => (
-                  <span className="badge" key={ticker}>
-                    <span
-                      className="badge-color"
-                      style={{ backgroundColor: palette[idx % palette.length] }}
-                    />
-                    {ticker}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {uniqueTickers.length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {uniqueTickers.map((ticker, idx) => (
-                <span className="badge" key={ticker}>
-                  <span
-                    className="badge-color"
-                    style={{ backgroundColor: palette[idx % palette.length] }}
-                  />
-                  {ticker}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
-        {loading && <div className="loading">데이터를 불러오는 중...</div>}
-        {error && <div className="error">{error}</div>}
-        {!loading && !error && missingTickers.length > 0 && (
-          <div className="error">
-            {missingTickers.join(', ')} 티커에 대한 데이터가 없습니다. 위 목록에서 사용 가능한
-            티커를 확인해 주세요.
+
+        <div className="date-picker">
+          <p style={{ margin: '0 0 6px', color: '#9fb2d0' }}>
+            날짜 선택 (단일 날짜 또는 범위를 선택하세요)
+          </p>
+          <DayPicker
+            mode="range"
+            selected={dateRange}
+            onSelect={setDateRange}
+            captionLayout="dropdown"
+            fromYear={2000}
+            toYear={2100}
+            showOutsideDays
+          />
+        </div>
+        {uniqueTickers.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {uniqueTickers.map((ticker, idx) => (
+              <span className="badge" key={ticker}>
+                <span
+                  className="badge-color"
+                  style={{ backgroundColor: palette[idx % palette.length] }}
+                />
+                {ticker}
+              </span>
+            ))}
           </div>
         )}
-        {!loading && !error && filteredHistory.length === 0 && (
+        {loading && <div className="loading">데이터를 불러오는 중...</div>}
+        {error && <div className="error">{error}</div>}
+        {!loading && !error && history.length === 0 && (
           <div className="error">표시할 데이터가 없습니다.</div>
         )}
       </div>
 
-      {!loading && !error && filteredHistory.length > 0 && (
-        <RankTrendChart data={filteredHistory} />
+      {!loading && !error && history.length > 0 && (
+        <RankTrendChart data={history} title={selectedRangeLabel} />
       )}
 
       {!loading && !error && todayRows.length > 0 && <TodayTable rows={todayRows} />}
