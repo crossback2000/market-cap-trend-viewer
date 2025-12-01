@@ -55,17 +55,17 @@ async function seed() {
   ];
 
   const insertStock = db.prepare(
-    'INSERT OR IGNORE INTO stocks (ticker, name, sector) VALUES (@ticker, @name, NULL)'
+    'INSERT OR IGNORE INTO stocks (ticker, name, sector) VALUES (?, ?, NULL)'
   );
-  const findStockId = db.prepare('SELECT id FROM stocks WHERE ticker = $ticker');
+  const findStockId = db.prepare('SELECT id FROM stocks WHERE ticker = ?');
   const upsertCap = db.prepare(
     `INSERT OR REPLACE INTO daily_market_caps (id, stock_id, date, market_cap, rank)
      VALUES (
-       COALESCE((SELECT id FROM daily_market_caps WHERE stock_id = @stock_id AND date = @date), NULL),
-       @stock_id,
-       @date,
-       @market_cap,
-       @rank
+       COALESCE((SELECT id FROM daily_market_caps WHERE stock_id = ? AND date = ?), NULL),
+       ?,
+       ?,
+       ?,
+       ?
      )`
   );
 
@@ -79,16 +79,20 @@ async function seed() {
 
   db.run('BEGIN');
   try {
-    tickers.forEach((entry) => insertStock.run(entry));
+    tickers.forEach((entry) => insertStock.run([entry.ticker, entry.name]));
 
     const stockMap = new Map<string, number>();
     tickers.forEach((entry) => {
-      findStockId.bind({ $ticker: entry.ticker });
-      if (findStockId.step()) {
-        const row = findStockId.getAsObject() as { id: number };
-        stockMap.set(entry.ticker, row.id);
-      }
+      findStockId.bind([entry.ticker]);
+      const hasRow = findStockId.step();
+      const row = hasRow ? (findStockId.getAsObject() as { id: number }) : undefined;
       findStockId.reset();
+
+      if (!row || row.id === undefined) {
+        throw new Error(`Failed to load stock id for ticker ${entry.ticker}`);
+      }
+
+      stockMap.set(entry.ticker, row.id);
     });
 
     const today = new Date();
@@ -111,10 +115,14 @@ async function seed() {
       generated
         .sort((a, b) => b.market_cap - a.market_cap)
         .forEach((row, rankIdx) => {
-          upsertCap.run({
-            ...row,
-            rank: rankIdx + 1,
-          });
+          upsertCap.run([
+            row.stock_id,
+            row.date,
+            row.stock_id,
+            row.date,
+            row.market_cap,
+            rankIdx + 1,
+          ]);
         });
     }
     db.run('COMMIT');
