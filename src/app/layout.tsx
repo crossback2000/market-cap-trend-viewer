@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Metadata } from 'next';
 import './globals.css';
+import 'react-day-picker/dist/style.css';
 
 export const metadata: Metadata = {
   title: 'Market Cap Trend Viewer',

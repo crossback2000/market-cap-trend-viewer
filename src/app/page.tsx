@@ -5,9 +5,10 @@ import { DateRange, DayPicker } from 'react-day-picker';
 import { RankTrendChart } from './components/RankTrendChart';
 import { TodayTable } from './components/TodayTable';
 import { MarketCapPoint, TodayRow } from './types';
-import 'react-day-picker/dist/style.css';
 
 const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#c084fc'];
+
+const formatLocalDate = (date: Date) => date.toLocaleDateString('en-CA');
 
 export default function Page() {
   const [history, setHistory] = useState<MarketCapPoint[]>([]);
@@ -39,8 +40,8 @@ export default function Page() {
         if (dateRange?.from) {
           const fromDate = dateRange.from;
           const toDate = dateRange.to ?? dateRange.from;
-          params.set('from', fromDate.toISOString().slice(0, 10));
-          params.set('to', toDate.toISOString().slice(0, 10));
+          params.set('from', formatLocalDate(fromDate));
+          params.set('to', formatLocalDate(toDate));
         }
 
         const historyRes = await fetch(
@@ -74,8 +75,8 @@ export default function Page() {
 
   const selectedRangeLabel = useMemo(() => {
     if (!dateRange?.from) return '최근 7일 데이터';
-    const from = dateRange.from.toISOString().slice(0, 10);
-    const to = (dateRange.to ?? dateRange.from).toISOString().slice(0, 10);
+    const from = formatLocalDate(dateRange.from);
+    const to = formatLocalDate(dateRange.to ?? dateRange.from);
     if (from === to) return `${from} 데이터`;
     return `${from} ~ ${to} 데이터`;
   }, [dateRange]);
