@@ -14,6 +14,6 @@ export async function GET(request: Request) {
     .map((t) => t.trim())
     .filter(Boolean);
 
-  const data = getMarketCaps({ tickers, from, to });
+  const data = await getMarketCaps({ tickers, from, to });
   return NextResponse.json({ data });
 }

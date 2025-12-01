@@ -1,72 +1,94 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import initSqlJs from 'sql.js';
+import type { ErrnoException } from 'node:fs';
 
-const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'market_caps.sqlite');
-const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+async function seed() {
+  const dbPath =
+    process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'market_caps.sqlite');
+  const dbDir = path.dirname(dbPath);
 
-const db = new Database(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS stocks (
-    id INTEGER PRIMARY KEY,
-    ticker TEXT UNIQUE NOT NULL,
-    name TEXT,
-    sector TEXT
+  const SQL = await initSqlJs({
+    locateFile: (file) => path.join(process.cwd(), 'node_modules/sql.js/dist', file),
+  });
+
+  let dbFile: Uint8Array | undefined;
+  try {
+    const buffer = await fs.promises.readFile(dbPath);
+    dbFile = new Uint8Array(buffer);
+  } catch (err) {
+    if ((err as ErrnoException).code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
+  const db = new SQL.Database(dbFile);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS stocks (
+      id INTEGER PRIMARY KEY,
+      ticker TEXT UNIQUE NOT NULL,
+      name TEXT,
+      sector TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_market_caps (
+      id INTEGER PRIMARY KEY,
+      stock_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      market_cap REAL NOT NULL,
+      rank INTEGER NOT NULL,
+      UNIQUE(stock_id, date),
+      FOREIGN KEY(stock_id) REFERENCES stocks(id)
+    );
+  `);
+
+  const tickers = [
+    { ticker: 'AAPL', name: 'Apple Inc.' },
+    { ticker: 'MSFT', name: 'Microsoft Corp.' },
+    { ticker: 'AMZN', name: 'Amazon.com Inc.' },
+    { ticker: 'GOOG', name: 'Alphabet Inc. (C)' },
+  ];
+
+  const insertStock = db.prepare(
+    'INSERT OR IGNORE INTO stocks (ticker, name, sector) VALUES (@ticker, @name, NULL)'
+  );
+  const findStockId = db.prepare('SELECT id FROM stocks WHERE ticker = $ticker');
+  const upsertCap = db.prepare(
+    `INSERT OR REPLACE INTO daily_market_caps (id, stock_id, date, market_cap, rank)
+     VALUES (
+       COALESCE((SELECT id FROM daily_market_caps WHERE stock_id = @stock_id AND date = @date), NULL),
+       @stock_id,
+       @date,
+       @market_cap,
+       @rank
+     )`
   );
 
-  CREATE TABLE IF NOT EXISTS daily_market_caps (
-    id INTEGER PRIMARY KEY,
-    stock_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    market_cap REAL NOT NULL,
-    rank INTEGER NOT NULL,
-    UNIQUE(stock_id, date),
-    FOREIGN KEY(stock_id) REFERENCES stocks(id)
-  );
-`);
+  function randomWalk(base: number, step: number) {
+    return base + Math.round((Math.random() - 0.5) * step);
+  }
 
-const tickers = [
-  { ticker: 'AAPL', name: 'Apple Inc.' },
-  { ticker: 'MSFT', name: 'Microsoft Corp.' },
-  { ticker: 'AMZN', name: 'Amazon.com Inc.' },
-  { ticker: 'GOOG', name: 'Alphabet Inc. (C)' },
-];
+  function formatDate(date: Date) {
+    return date.toISOString().slice(0, 10);
+  }
 
-const insertStock = db.prepare(
-  'INSERT OR IGNORE INTO stocks (ticker, name, sector) VALUES (@ticker, @name, NULL)'
-);
-const findStockId = db.prepare('SELECT id FROM stocks WHERE ticker = ?');
-const upsertCap = db.prepare(
-  `INSERT OR REPLACE INTO daily_market_caps (id, stock_id, date, market_cap, rank)
-   VALUES (
-     COALESCE((SELECT id FROM daily_market_caps WHERE stock_id = @stock_id AND date = @date), NULL),
-     @stock_id,
-     @date,
-     @market_cap,
-     @rank
-   )`
-);
-
-function randomWalk(base: number, step: number) {
-  return base + Math.round((Math.random() - 0.5) * step);
-}
-
-function formatDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function seed() {
-  const tx = db.transaction(() => {
+  db.run('BEGIN');
+  try {
     tickers.forEach((entry) => insertStock.run(entry));
 
     const stockMap = new Map<string, number>();
     tickers.forEach((entry) => {
-      const row = findStockId.get(entry.ticker) as { id: number };
-      stockMap.set(entry.ticker, row.id);
+      findStockId.bind({ $ticker: entry.ticker });
+      if (findStockId.step()) {
+        const row = findStockId.getAsObject() as { id: number };
+        stockMap.set(entry.ticker, row.id);
+      }
+      findStockId.reset();
     });
 
     const today = new Date();
@@ -95,10 +117,23 @@ function seed() {
           });
         });
     }
-  });
+    db.run('COMMIT');
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  } finally {
+    insertStock.free();
+    findStockId.free();
+    upsertCap.free();
+  }
 
-  tx();
+  const data = db.export();
+  await fs.promises.writeFile(dbPath, Buffer.from(data));
+
+  console.log(`Seed complete. Database located at ${dbPath}`);
 }
 
-seed();
-console.log(`Seed complete. Database located at ${dbPath}`);
+seed().catch((err) => {
+  console.error('Seed failed:', err);
+  process.exitCode = 1;
+});

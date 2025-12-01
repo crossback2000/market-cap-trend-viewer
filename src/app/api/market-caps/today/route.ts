@@ -4,6 +4,6 @@ import { getLatestRanks } from '@/lib/db';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  const data = getLatestRanks();
+  const data = await getLatestRanks();
   return NextResponse.json({ data });
 }

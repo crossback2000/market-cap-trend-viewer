@@ -1,28 +1,78 @@
-import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
+import initSqlJs, { Database as SqlDatabase, SqlJsStatic } from 'sql.js';
+import type { ErrnoException } from 'node:fs';
 
 const defaultPath = path.join(process.cwd(), 'data', 'market_caps.sqlite');
 const dbPath = process.env.DATABASE_PATH || defaultPath;
 
-let db: Database.Database | null = null;
+let sqlPromise: Promise<SqlJsStatic> | null = null;
+let dbPromise: Promise<SqlDatabase> | null = null;
 
-export const getDb = () => {
-  if (!db) {
-    db = new Database(dbPath);
+async function loadSql() {
+  if (!sqlPromise) {
+    sqlPromise = initSqlJs({
+      locateFile: (file) => path.join(process.cwd(), 'node_modules/sql.js/dist', file),
+    });
   }
-  return db;
-};
+  return sqlPromise;
+}
+
+async function loadDatabase() {
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      const SQL = await loadSql();
+      let fileBuffer: Uint8Array | undefined;
+      try {
+        const buffer = await fs.promises.readFile(dbPath);
+        fileBuffer = new Uint8Array(buffer);
+      } catch (err) {
+        if ((err as ErrnoException).code !== 'ENOENT') {
+          throw err;
+        }
+      }
+      const database = new SQL.Database(fileBuffer);
+      ensureSchema(database);
+      return database;
+    })();
+  }
+  return dbPromise;
+}
+
+function ensureSchema(database: SqlDatabase) {
+  database.run(`
+    CREATE TABLE IF NOT EXISTS stocks (
+      id INTEGER PRIMARY KEY,
+      ticker TEXT UNIQUE NOT NULL,
+      name TEXT,
+      sector TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_market_caps (
+      id INTEGER PRIMARY KEY,
+      stock_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      market_cap REAL NOT NULL,
+      rank INTEGER NOT NULL,
+      UNIQUE(stock_id, date),
+      FOREIGN KEY(stock_id) REFERENCES stocks(id)
+    );
+  `);
+}
 
 function formatDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function getLatestDate(database: Database.Database) {
-  const latestDateStmt = database.prepare(
-    'SELECT date FROM daily_market_caps ORDER BY date DESC LIMIT 1'
-  );
-  const latest = latestDateStmt.get() as { date?: string } | undefined;
-  return latest?.date;
+function getLatestDate(database: SqlDatabase) {
+  const stmt = database.prepare('SELECT date FROM daily_market_caps ORDER BY date DESC LIMIT 1');
+  let latest: string | undefined;
+  if (stmt.step()) {
+    const row = stmt.getAsObject() as { date?: string };
+    latest = row.date;
+  }
+  stmt.free();
+  return latest;
 }
 
 export type MarketCapRow = {
@@ -40,7 +90,7 @@ export type LatestRankRow = {
   rank: number;
 };
 
-export function getMarketCaps({
+export async function getMarketCaps({
   tickers,
   from,
   to,
@@ -48,8 +98,8 @@ export function getMarketCaps({
   tickers?: string[];
   from?: string;
   to?: string;
-}): MarketCapRow[] {
-  const db = getDb();
+}): Promise<MarketCapRow[]> {
+  const db = await loadDatabase();
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
 
@@ -97,16 +147,29 @@ export function getMarketCaps({
      ORDER BY dmc.date ASC, dmc.rank ASC`
   );
 
-  return stmt.all(params) as MarketCapRow[];
+  stmt.bind(params);
+  const rows: MarketCapRow[] = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject() as MarketCapRow);
+  }
+  stmt.free();
+
+  return rows;
 }
 
-export function getLatestRanks(): LatestRankRow[] {
-  const db = getDb();
+export async function getLatestRanks(): Promise<LatestRankRow[]> {
+  const db = await loadDatabase();
   const latestDateStmt = db.prepare(
     'SELECT date FROM daily_market_caps ORDER BY date DESC LIMIT 1'
   );
-  const latest = latestDateStmt.get() as { date?: string } | undefined;
-  if (!latest?.date) {
+  let latest: string | undefined;
+  if (latestDateStmt.step()) {
+    const row = latestDateStmt.getAsObject() as { date?: string };
+    latest = row.date;
+  }
+  latestDateStmt.free();
+
+  if (!latest) {
     return [];
   }
 
@@ -118,5 +181,12 @@ export function getLatestRanks(): LatestRankRow[] {
      ORDER BY dmc.rank ASC`
   );
 
-  return stmt.all({ date: latest.date }) as LatestRankRow[];
+  stmt.bind({ date: latest });
+  const rows: LatestRankRow[] = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject() as LatestRankRow);
+  }
+  stmt.free();
+
+  return rows;
 }
