@@ -8,6 +8,7 @@ const dbPath = process.env.DATABASE_PATH || defaultPath;
 
 let sqlPromise: Promise<SqlJsStatic> | null = null;
 let dbPromise: Promise<SqlDatabase> | null = null;
+let lastModifiedMs: number | null = null;
 
 async function loadSql() {
   if (!sqlPromise) {
@@ -19,7 +20,15 @@ async function loadSql() {
 }
 
 async function loadDatabase() {
-  if (!dbPromise) {
+  const stat = await fs.promises
+    .stat(dbPath)
+    .catch((err: ErrnoException) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
+
+  const modifiedMs = stat?.mtimeMs ?? null;
+
+  // Reload the database from disk if it hasn't been loaded yet or if the file changed
+  if (!dbPromise || (modifiedMs && modifiedMs !== lastModifiedMs)) {
+    lastModifiedMs = modifiedMs;
     dbPromise = (async () => {
       const SQL = await loadSql();
       let fileBuffer: Uint8Array | undefined;
@@ -112,19 +121,19 @@ export async function getMarketCaps({
   if (tickers && tickers.length > 0) {
     clauses.push(`s.ticker IN (${tickers.map((_, i) => `@ticker${i}`).join(',')})`);
     tickers.forEach((ticker, i) => {
-      params[`ticker${i}`] = ticker;
+      params[`@ticker${i}`] = ticker;
     });
   }
 
   if (from || to) {
     if (from) {
       clauses.push('dmc.date >= @from');
-      params.from = from;
+      params['@from'] = from;
     }
 
     if (to) {
       clauses.push('dmc.date <= @to');
-      params.to = to;
+      params['@to'] = to;
     }
   } else {
     const end = new Date(latestDate);
@@ -133,8 +142,8 @@ export async function getMarketCaps({
 
     clauses.push('dmc.date >= @from');
     clauses.push('dmc.date <= @to');
-    params.from = formatDate(start);
-    params.to = latestDate;
+    params['@from'] = formatDate(start);
+    params['@to'] = latestDate;
   }
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
