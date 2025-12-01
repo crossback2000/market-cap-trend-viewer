@@ -129,11 +129,6 @@ async function seed() {
     return date.toISOString().slice(0, 10);
   }
 
-  const historicalDates = new Set<string>();
-  tickers.forEach((t) => {
-    t.history?.forEach((h) => historicalDates.add(h.date));
-  });
-
   const defaultDates = (() => {
     const today = new Date();
     const dates: string[] = [];
@@ -145,9 +140,12 @@ async function seed() {
     return dates;
   })();
 
-  const dates = historicalDates.size > 0
-    ? Array.from(historicalDates).sort()
-    : defaultDates;
+  const historicalDates = new Set<string>();
+  tickers.forEach((t) => {
+    t.history?.forEach((h) => historicalDates.add(h.date));
+  });
+
+  const dates = Array.from(new Set([...defaultDates, ...historicalDates])).sort();
 
   const historyMap = new Map<string, Map<string, number>>();
   tickers.forEach((t) => {
